@@ -427,12 +427,14 @@
   }
 
   /**
-   * Shows the hint banner with the specified text/HTML state.
+   * Shows the hint banner with the specified state.
    *
-   * - idle state   : sets textContent (safe, no XSS risk — static string).
-   * - looping state: sets innerHTML to embed the clickable STOP span,
-   *                  then wires a fresh click listener to that span so
-   *                  the listener survives any innerHTML replacement.
+   * IMPORTANT: innerHTML is intentionally avoided here.
+   * Running in world:"MAIN" means this script is subject to YouTube's
+   * Content-Security-Policy: require-trusted-types-for 'script'.
+   * A raw innerHTML assignment throws a TypeError under that policy,
+   * crashing showHint() mid-call and preventing the loop from starting.
+   * All content is built with DOM APIs instead — Trusted Types compliant.
    *
    * @param {'idle'|'looping'} state
    */
@@ -442,31 +444,38 @@
 
     hintBanner.classList.remove("looping");
 
+    // Clear all existing child nodes safely — no innerHTML needed.
+    while (hintBanner.firstChild) {
+      hintBanner.removeChild(hintBanner.firstChild);
+    }
+
     if (state === "looping") {
-      // Build looping banner with an inline STOP link.
-      // innerHTML is safe here — no user data is interpolated.
-      hintBanner.innerHTML =
-        'AttentionSpam is active. Click <span id="attentionspam-stop">STOP</span> to exit.';
+      // Build: "AttentionSpam is active. Click [STOP] to exit."
+      // entirely with DOM API calls — Trusted Types compliant.
+      hintBanner.appendChild(
+        document.createTextNode("AttentionSpam is active. Click ")
+      );
 
-      // Wire the STOP span click listener every time we render it,
-      // because innerHTML replacement destroys the previous element.
-      const stopEl = document.getElementById("attentionspam-stop");
-      if (stopEl) {
-        stopEl.addEventListener("click", (e) => {
-          e.stopPropagation();
-          stopLoop();
-        }, { once: true });
-      }
+      const stopSpan = document.createElement("span");
+      stopSpan.id = "attentionspam-stop";
+      stopSpan.textContent = "STOP";
+      // Wire listener directly on the element reference — no
+      // getElementById needed, no timing risk.
+      stopSpan.addEventListener("click", (e) => {
+        e.stopPropagation();
+        stopLoop();
+      }, { once: true });
+      hintBanner.appendChild(stopSpan);
 
+      hintBanner.appendChild(document.createTextNode(" to exit."));
       hintBanner.classList.add("looping");
     } else {
-      // Idle state — safe plain text, no child elements needed.
+      // Idle state — plain text, no child elements.
       hintBanner.textContent = HINT_TEXT_IDLE;
     }
 
     // Trigger CSS transition by first removing then adding .visible
     hintBanner.classList.remove("visible");
-    // rAF ensures the browser registers the removal before re-adding
     requestAnimationFrame(() => hintBanner.classList.add("visible"));
   }
 
@@ -598,23 +607,43 @@
     btn._attentionSpamListened = true;
 
     /**
-     * Fires when a long-press is confirmed (timer expires).
-     * We stop propagation to prevent a normal message send.
+     * Fires when the long-press threshold is reached.
+     *
+     * The challenge: after the 1.5 s hold, when the user releases the
+     * mouse/touch, Chrome fires a `click` event — we must suppress that
+     * to avoid a duplicate send. However, the loop's own `btn.click()`
+     * (called inside runLoopIteration) ALSO fires a `click` event, and
+     * we must NOT suppress that — it is the first actual message send.
+     *
+     * The solution: `event.isTrusted`.
+     *  - A real user gesture (mouse release) → isTrusted === true  → suppress.
+     *  - A programmatic btn.click() call    → isTrusted === false → let through.
+     *
+     * The listener manually removes itself after blocking one trusted click,
+     * so subsequent loop iterations' programmatic clicks are never affected.
      */
-    function onLongPressConfirmed(e) {
-      // Prevent the click from propagating to YouTube's handler
-      btn.addEventListener("click", suppressNextClick, { once: true, capture: true });
+    function onLongPressConfirmed() {
+      function suppressUserReleaseClick(e) {
+        if (!e.isTrusted) {
+          // Programmatic click from the loop — let it through.
+          // Do NOT remove the listener yet; we still need to catch
+          // the upcoming trusted release-click from the user.
+          return;
+        }
+        // Trusted click = user's mouse/touch release after the long-press.
+        // Block it to prevent a duplicate send, then self-remove.
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        btn.removeEventListener("click", suppressUserReleaseClick, { capture: true });
+      }
+
+      btn.addEventListener("click", suppressUserReleaseClick, { capture: true });
 
       if (isLooping) {
         stopLoop();
       } else {
         startLoop();
       }
-    }
-
-    function suppressNextClick(e) {
-      e.stopImmediatePropagation();
-      e.preventDefault();
     }
 
     function startLongPressTimer(e) {
