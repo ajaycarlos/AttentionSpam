@@ -555,22 +555,41 @@
 
   /* =========================================================
      EARLY-EXIT GUARD
-     The manifest uses all_frames:true so this script executes in
-     both the outer watch page and the live-chat iframe document.
-     We only want to run DOM logic inside the iframe.
+     all_frames:true injects this script into every frame on the
+     page — including sandboxed ad iframes and cross-origin frames
+     where APIs like customElements may be null or inaccessible.
+
+     ALL THREE conditions must pass before any observer, API call,
+     or DOM lifecycle hook is executed:
+       1. URL contains "/live_chat"         — correct iframe document.
+       2. customElements !== undefined/null — API is available.
+       3. Hostname belongs to youtube.com   — correct origin.
+
+     A direct `return` exits the outer attentionSpam() IIFE silently
+     with zero console output, which is the correct behaviour for
+     sandboxed or cross-origin frames that should be ignored.
      ========================================================= */
 
-  /**
-   * Returns true when we are executing inside the live-chat iframe
-   * document (URL contains /live_chat). Returns false for the outer
-   * watch page, which should do nothing.
-   */
-  function isLiveChatFrame() {
-    return window.location.href.includes("/live_chat");
-  }
+  // Condition 1 — must be the live-chat iframe URL
+  const _isLiveChatUrl = window.location.href.includes("/live_chat");
 
-  if (!isLiveChatFrame()) {
-    // We are in the outer watch page — nothing to do here.
+  // Condition 2 — customElements must be defined and non-null.
+  // Sandboxed / cross-origin frames can expose this as null or undefined,
+  // which would cause a TypeError on customElements.whenDefined().
+  const _hasCustomElements =
+    typeof customElements !== "undefined" && customElements !== null;
+
+  // Condition 3 — hostname must be youtube.com or a subdomain.
+  // Guards against any embedded third-party ad / widget iframe.
+  const _isYouTubeHost =
+    typeof window.location.hostname === "string" &&
+    (window.location.hostname === "youtube.com" ||
+      window.location.hostname.endsWith(".youtube.com"));
+
+  if (!_isLiveChatUrl || !_hasCustomElements || !_isYouTubeHost) {
+    // Silent early exit — this frame is not the live-chat context.
+    // `return` here exits the outer attentionSpam() IIFE directly;
+    // no error is thrown and no console output is produced.
     return;
   }
 
@@ -686,7 +705,7 @@
      upgraded from HTMLElement to its full Polymer class, which
      is when shadow DOM / contenteditable children become queryable.
      --------------------------------------------------------- */
-  if (typeof customElements !== "undefined" && customElements.whenDefined) {
+  if (typeof customElements !== "undefined" && customElements !== null && customElements.whenDefined) {
     // Primary component containing the contenteditable input
     customElements.whenDefined("yt-live-chat-text-input-field").then(() => {
       console.info(
