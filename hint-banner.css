@@ -1,80 +1,120 @@
 /* ============================================================
    AttentionSpam — Hint Banner Stylesheet
-   Uses native YouTube CSS custom properties so the banner
-   automatically adapts to light / dark / high-contrast themes
-   without any JS theme-detection code.
+
+   Theme strategy:
+   - Base rules use YouTube CSS variables with light-mode-safe
+     hardcoded fallbacks. These work perfectly in Light Mode.
+   - Dark mode is handled explicitly via:
+       1. html[dark] / html[is-dark-theme] — YouTube's own attribute
+          that it stamps on <html> when the user picks Dark Mode.
+       2. @media (prefers-color-scheme: dark) — OS-level fallback for
+          system auto-dark and any YouTube build variant that doesn't
+          use the html[dark] attribute.
+   - The light mode styles below are NEVER overridden by dark rules.
    ============================================================ */
 
+/* ── Base (Light Mode) ───────────────────────────────────────
+   These values are perfect and must not be changed.          */
+
 #attentionspam-hint {
-  /* Layout */
-  display: none;              /* controlled by JS */
+  /* Layout — hidden by default, controlled by JS */
+  display: none;
   box-sizing: border-box;
   width: 100%;
-  padding: 5px 10px;
-  margin-bottom: 2px;
+
+  /* Geometry */
+  padding: 8px 12px;
+  margin: 4px 0;
+  border-radius: 8px;
+
+  /* No harsh border — clean chip appearance */
+  border: none;
+
+  /* Light Mode background: soft light-gray chip.
+     Fallback #f2f2f2 matches YouTube's own chip color exactly. */
+  background-color: var(--yt-spec-badge-chip-background, #f2f2f2);
 
   /* Typography */
   font-family: "Roboto", "Arial", sans-serif;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   letter-spacing: 0.01em;
+  line-height: 1.5;
   text-align: center;
-  line-height: 1.4;
 
-  /* Colors — native YT CSS variables */
+  /* Light Mode text: crisp dark charcoal.
+     Fallback #0f0f0f is YouTube's own near-black text color. */
   color: var(--yt-spec-text-primary, #0f0f0f);
-  background-color: var(
-    --yt-spec-static-brand-background-solid,
-    rgba(0, 0, 0, 0.06)
-  );
 
-  /* Shape & border */
-  border-radius: 4px;
-  border: 1px solid var(--yt-spec-10-percent-layer, rgba(0, 0, 0, 0.1));
-
-  /* Transition for smooth show/hide */
-  transition: opacity 0.25s ease, transform 0.25s ease;
+  /* Smooth show / hide transitions */
   opacity: 0;
   transform: translateY(4px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
 
-  /* Prevent text selection */
+  /* Prevent accidental text selection */
   user-select: none;
   -webkit-user-select: none;
 
-  /* Ensure it sits above chat elements */
+  /* Stack above chat elements */
   position: relative;
   z-index: 9999;
 }
 
-/* Visible state toggled by JS */
+/* Visible state — toggled by JS */
 #attentionspam-hint.visible {
   display: block;
   opacity: 1;
   transform: translateY(0);
 }
 
-/* Active / looping state styling */
+/* Active / looping state */
 #attentionspam-hint.looping {
-  color: var(--yt-spec-text-primary, #0f0f0f);
-  background-color: var(
-    --yt-spec-call-to-action,
-    rgba(62, 166, 255, 0.18)
-  );
-  border-color: var(--yt-spec-call-to-action, #3ea6ff);
   font-weight: 600;
 }
 
-/* Clickable STOP link inside the looping banner */
+/* ── Clickable STOP link (shared across both themes) ─────── */
+
 #attentionspam-stop {
-  cursor: pointer;
+  font-weight: inherit;
+
+  /* YouTube blue — works in both Light and Dark mode */
+  color: var(
+    --yt-spec-call-to-action,
+    var(--yt-spec-text-brand, #3ea6ff)
+  );
+
   text-decoration: underline;
   text-underline-offset: 2px;
-  /* Inherit the banner's theme color so it stays legible in both themes */
-  color: inherit;
-  /* Subtle brightness shift on hover to signal interactivity */
+  cursor: pointer;
   transition: filter 0.15s ease;
 }
 
 #attentionspam-stop:hover {
-  filter: brightness(1.4);
+  filter: brightness(1.3);
+}
+
+/* ── Dark Mode Overrides ─────────────────────────────────────
+   Applied via YouTube's html[dark] attribute AND the OS media
+   query. Both target only the two properties that need to flip:
+   background-color and color. Everything else stays identical.
+
+   Light mode rules above are unaffected — these selectors have
+   higher specificity only on dark-mode pages.               */
+
+/* YouTube stamps html[dark] when the user selects Dark Mode  */
+html[dark] #attentionspam-hint,
+html[is-dark-theme] #attentionspam-hint,
+html[system-icons="dark"] #attentionspam-hint {
+  /* Elevated charcoal surface — matches YouTube's own dark chip color */
+  background-color: #272727;
+  /* Pure white text — fully readable on the charcoal surface */
+  color: #ffffff;
+}
+
+/* OS / browser system dark mode preference as a safe fallback */
+@media (prefers-color-scheme: dark) {
+  #attentionspam-hint {
+    background-color: #272727;
+    color: #ffffff;
+  }
 }
