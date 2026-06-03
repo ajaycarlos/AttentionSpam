@@ -752,13 +752,13 @@
     if (initComplete) return;
 
     const input = getChatInput();
-    const btn   = getSendButton();
+    const btn = getSendButton();
 
     // Validate that both elements are genuine, fully-upgraded DOM nodes.
     // A Polymer custom element may be present in the tree as a stub
     // before its class is applied — instanceof HTMLElement filters those out.
     const inputReady = input instanceof HTMLElement;
-    const btnReady   = btn   instanceof HTMLElement;
+    const btnReady = btn instanceof HTMLElement;
 
     if (!inputReady || !btnReady) {
       // Elements not ready yet — keep polling silently.
@@ -855,12 +855,12 @@
       );
       // Small rAF delay to let Polymer finish rendering its shadow DOM
       requestAnimationFrame(() => requestAnimationFrame(init));
-    }).catch(() => {});
+    }).catch(() => { });
 
     // Secondary component (some YouTube builds use this wrapper)
     customElements.whenDefined("yt-live-chat-message-input-renderer").then(() => {
       requestAnimationFrame(() => requestAnimationFrame(init));
-    }).catch(() => {});
+    }).catch(() => { });
   }
 
   /* ---------------------------------------------------------
