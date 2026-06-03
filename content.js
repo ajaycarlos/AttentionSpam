@@ -2,8 +2,18 @@
  * AttentionSpam — content.js
  * Manifest V3 Content Script
  *
- * Runs inside the YouTube Live Chat iframe (live_chat* URLs) and the
- * parent watch page (watch* URLs, where YouTube embeds the chat frame).
+ * Targets: https://www.youtube.com/live_chat* (the iframe document).
+ * The manifest injects this into all_frames, so it runs in both the
+ * outer watch page and the embedded live-chat iframe. An early-exit
+ * guard ensures all DOM work only executes inside the iframe context.
+ *
+ * Polymer / async rendering strategy:
+ *  - MutationObserver is anchored to documentElement immediately so it
+ *    fires even before <body> is available.
+ *  - customElements.whenDefined() awaits precise Polymer component
+ *    upgrades (yt-live-chat-text-input-field) rather than relying on
+ *    the element merely being present in the DOM tree.
+ *  - setInterval polling is kept as a belt-and-suspenders fallback.
  *
  * Core responsibilities:
  *  1. Locate the contenteditable chat input and Send button using
@@ -544,15 +554,42 @@
   }
 
   /* =========================================================
-     INITIALIZATION — poll until chat UI is ready
+     EARLY-EXIT GUARD
+     The manifest uses all_frames:true so this script executes in
+     both the outer watch page and the live-chat iframe document.
+     We only want to run DOM logic inside the iframe.
+     ========================================================= */
+
+  /**
+   * Returns true when we are executing inside the live-chat iframe
+   * document (URL contains /live_chat). Returns false for the outer
+   * watch page, which should do nothing.
+   */
+  function isLiveChatFrame() {
+    return window.location.href.includes("/live_chat");
+  }
+
+  if (!isLiveChatFrame()) {
+    // We are in the outer watch page — nothing to do here.
+    return;
+  }
+
+  /* =========================================================
+     INITIALIZATION — poll + Polymer-aware setup
      ========================================================= */
 
   let initAttempts = 0;
   let initPollId = null;
+  let initComplete = false;
 
+  /**
+   * Core setup: attach all listeners and inject the banner.
+   * Safe to call multiple times — each sub-function is guarded
+   * by its own _attentionSpam* flag.
+   */
   function init() {
-    // Only run inside the live chat frame context
-    // (the script also matches watch pages for frame injection)
+    if (initComplete) return;
+
     const input = getChatInput();
     const btn = getSendButton();
 
@@ -563,13 +600,13 @@
           "[AttentionSpam] Could not locate chat UI after max attempts. Giving up."
         );
         clearInterval(initPollId);
-        return;
       }
       return; // keep polling
     }
 
-    // Chat UI is ready — stop polling and set up
+    // Elements are ready — stop the fallback poll
     clearInterval(initPollId);
+    initComplete = true;
 
     injectHintBanner();
     attachInputObserver();
@@ -580,41 +617,98 @@
   }
 
   /**
-   * Re-attach listeners when YouTube navigates within the SPA
-   * (e.g., user opens a different stream — the DOM is partially replaced).
+   * MutationObserver callback — re-attaches listeners when YouTube
+   * replaces DOM subtrees during SPA navigation or Polymer upgrades.
    */
   function handleDOMChanges(mutations) {
+    let hasAddedNodes = false;
     for (const mutation of mutations) {
-      if (mutation.addedNodes.length === 0) continue;
+      if (mutation.addedNodes.length > 0) { hasAddedNodes = true; break; }
+    }
+    if (!hasAddedNodes) return;
 
-      const btn = getSendButton();
-      if (btn && !btn._attentionSpamListened) {
-        attachSendButtonListeners();
-      }
+    // If we haven't finished init yet, attempt it now
+    if (!initComplete) {
+      init();
+      return;
+    }
 
-      const input = getChatInput();
-      if (input && !input._attentionSpamObserved) {
-        attachInputObserver();
-      }
+    // Re-attach anything that was torn down during SPA navigation
+    const btn = getSendButton();
+    if (btn && !btn._attentionSpamListened) {
+      attachSendButtonListeners();
+    }
 
-      // Re-inject the hint banner if it was removed
-      if (!document.getElementById("attentionspam-hint")) {
-        hintBanner = null;
-        injectHintBanner();
-        if (isLooping) showHint("looping");
-      }
+    const input = getChatInput();
+    if (input && !input._attentionSpamObserved) {
+      attachInputObserver();
+    }
+
+    // Re-inject the hint banner if the DOM replaced it
+    if (!document.getElementById("attentionspam-hint")) {
+      hintBanner = null;
+      injectHintBanner();
+      if (isLooping) showHint("looping");
     }
   }
 
+  /* ---------------------------------------------------------
+     Start MutationObserver immediately — anchor to
+     documentElement so we catch mutations even before <body>
+     is appended (Polymer upgrades happen in early microtasks).
+     --------------------------------------------------------- */
   const domObserver = new MutationObserver(handleDOMChanges);
-  domObserver.observe(document.body || document.documentElement, {
-    childList: true,
-    subtree: true,
-  });
 
-  // Start polling for the chat UI
+  function startObserver() {
+    // Prefer body for tighter subtree scope; fall back to documentElement
+    const root = document.body || document.documentElement;
+    domObserver.observe(root, { childList: true, subtree: true });
+  }
+
+  startObserver();
+
+  // If body wasn't available yet, re-anchor once it appears
+  if (!document.body) {
+    const bodyWatcher = new MutationObserver(() => {
+      if (document.body) {
+        bodyWatcher.disconnect();
+        // Re-observe with the now-available body as root
+        domObserver.disconnect();
+        startObserver();
+      }
+    });
+    bodyWatcher.observe(document.documentElement, { childList: true });
+  }
+
+  /* ---------------------------------------------------------
+     Polymer customElements.whenDefined() — precise upgrade hook.
+     Fires the exact moment YouTube's chat input component is
+     upgraded from HTMLElement to its full Polymer class, which
+     is when shadow DOM / contenteditable children become queryable.
+     --------------------------------------------------------- */
+  if (typeof customElements !== "undefined" && customElements.whenDefined) {
+    // Primary component containing the contenteditable input
+    customElements.whenDefined("yt-live-chat-text-input-field").then(() => {
+      console.info(
+        "[AttentionSpam] yt-live-chat-text-input-field upgraded — running init."
+      );
+      // Small rAF delay to let Polymer finish rendering its shadow DOM
+      requestAnimationFrame(() => requestAnimationFrame(init));
+    }).catch(() => {});
+
+    // Secondary component (some YouTube builds use this wrapper)
+    customElements.whenDefined("yt-live-chat-message-input-renderer").then(() => {
+      requestAnimationFrame(() => requestAnimationFrame(init));
+    }).catch(() => {});
+  }
+
+  /* ---------------------------------------------------------
+     Belt-and-suspenders: setInterval poll as final fallback
+     in case both the observer and whenDefined path miss the
+     window (e.g., component already upgraded before script ran).
+     --------------------------------------------------------- */
   initPollId = setInterval(init, INIT_POLL_INTERVAL_MS);
 
-  // Also try immediately in case the page is already loaded
+  // Attempt immediately — succeeds if elements are already in the DOM
   init();
 })();
