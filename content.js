@@ -48,11 +48,12 @@
   const JITTER_MIN_MS = 500;
   const JITTER_MAX_MS = 1500;
 
-  /** How often (ms) to poll for the chat UI after page load. */
+  /** How often (ms) to poll for the chat UI after page load.
+   *  The poll runs indefinitely — no cap — because YouTube's Polymer
+   *  pipeline can take an unpredictable amount of time to upgrade
+   *  and render the chat input components.
+   */
   const INIT_POLL_INTERVAL_MS = 800;
-
-  /** Maximum number of init poll attempts before giving up. */
-  const INIT_MAX_ATTEMPTS = 50;
 
   /** Hint banner text states. */
   const HINT_TEXT_IDLE = "Hold Send to loop this message safely.";
@@ -597,33 +598,42 @@
      INITIALIZATION — poll + Polymer-aware setup
      ========================================================= */
 
-  let initAttempts = 0;
   let initPollId = null;
   let initComplete = false;
 
   /**
    * Core setup: attach all listeners and inject the banner.
-   * Safe to call multiple times — each sub-function is guarded
-   * by its own _attentionSpam* flag.
+   *
+   * Runs indefinitely on each poll tick until BOTH the chat input
+   * and Send button are verified as real HTMLElement instances in
+   * the DOM. No hard cap — YouTube's Polymer rendering pipeline
+   * can upgrade components at any point after document_idle.
+   *
+   * Re-entry safety: each sub-function checks its own
+   * _attentionSpamListened / _attentionSpamObserved flag, so even
+   * if init() is called again by the MutationObserver during a
+   * dynamic DOM mutation, no listener is ever bound twice.
    */
   function init() {
+    // Guard: only run once. initComplete is set to true on the
+    // first successful setup and never reset during the session.
     if (initComplete) return;
 
     const input = getChatInput();
-    const btn = getSendButton();
+    const btn   = getSendButton();
 
-    if (!input || !btn) {
-      initAttempts++;
-      if (initAttempts >= INIT_MAX_ATTEMPTS) {
-        console.warn(
-          "[AttentionSpam] Could not locate chat UI after max attempts. Giving up."
-        );
-        clearInterval(initPollId);
-      }
-      return; // keep polling
+    // Validate that both elements are genuine, fully-upgraded DOM nodes.
+    // A Polymer custom element may be present in the tree as a stub
+    // before its class is applied — instanceof HTMLElement filters those out.
+    const inputReady = input instanceof HTMLElement;
+    const btnReady   = btn   instanceof HTMLElement;
+
+    if (!inputReady || !btnReady) {
+      // Elements not ready yet — keep polling silently.
+      return;
     }
 
-    // Elements are ready — stop the fallback poll
+    // Both elements are verified — stop the fallback poll and set up.
     clearInterval(initPollId);
     initComplete = true;
 
