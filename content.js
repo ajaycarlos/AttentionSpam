@@ -86,52 +86,127 @@
      ========================================================= */
 
   /**
-   * Returns the contenteditable div inside <yt-live-chat-text-input-field>
-   * or the element with id="input", whichever is found first.
+   * Returns the contenteditable chat input element.
+   *
+   * Strategy (most-specific → most-generic):
+   *  1. Polymer component wrapper → scoped contenteditable child.
+   *  2. #contenteditable-root by ID (stable internal YouTube selector).
+   *  3. Any element with the [contenteditable] attribute inside #input.
+   *  4. Any [contenteditable] element in the document (broadest fallback).
+   *
+   * NOTE: We match `[contenteditable]` without an explicit value check so
+   * the selector works regardless of whether YouTube sets the attribute to
+   * "true", "", or any other value in future DOM revisions.
    */
   function getChatInput() {
-    // Primary: polymer component → inner contenteditable
-    const component = document.querySelector(
+    // 1. Polymer component scope (present in some YouTube builds)
+    const viaPolymer = document.querySelector(
       "yt-live-chat-text-input-field #contenteditable-root, " +
-      "yt-live-chat-text-input-field [contenteditable='true']"
+      "yt-live-chat-text-input-field [contenteditable]"
     );
-    if (component) return component;
+    if (viaPolymer) return viaPolymer;
 
-    // Fallback: generic contenteditable inside #input wrapper
-    const inputWrapper = document.querySelector("#input [contenteditable='true']");
-    if (inputWrapper) return inputWrapper;
+    // 2. Stable internal ID used by YouTube's chat input shadow DOM
+    const byRootId = document.getElementById("contenteditable-root");
+    if (byRootId) return byRootId;
 
-    // Last resort: any contenteditable in the chat panel
-    return document.querySelector("[contenteditable='true']");
+    // 3. Any contenteditable descendant of the #input structural wrapper
+    const viaInputWrapper = document.querySelector("#input [contenteditable]");
+    if (viaInputWrapper) return viaInputWrapper;
+
+    // 4. Broadest fallback — any contenteditable div/element on the page.
+    //    Prefer a div to avoid matching non-chat rich-text editors.
+    return (
+      document.querySelector("div[contenteditable]") ||
+      document.querySelector("[contenteditable]")
+    );
   }
 
   /**
-   * Returns the Send button element using stable attribute selectors.
+   * Returns the Send button element.
+   *
+   * Strategy (most-specific → most-generic):
+   *  1. aria-label="Send"         — verified label in the updated YT DOM.
+   *  2. aria-label="Send message" — legacy label used in older builds.
+   *  3. #send-button scoped inner button / paper-button element.
+   *  4. #send-button element itself as a last resort.
+   *
+   * aria-label is the most resilient selector because it is tied to
+   * accessibility semantics rather than structural class names.
    */
   function getSendButton() {
-    // Primary: id="send-button" which may wrap an inner button/paper-button
-    const byId = document.querySelector(
-      "#send-button button, #send-button paper-button, #send-button"
+    // 1. Verified current label (updated YouTube DOM, June 2025+)
+    const bySend = document.querySelector(
+      "button[aria-label='Send'], [aria-label='Send']"
     );
-    if (byId) return byId;
+    if (bySend) return bySend;
 
-    // Fallback: aria-label
-    return document.querySelector(
+    // 2. Legacy label from earlier YouTube builds
+    const bySendMessage = document.querySelector(
       "button[aria-label='Send message'], " +
       "yt-button-renderer[aria-label='Send message']"
     );
+    if (bySendMessage) return bySendMessage;
+
+    // 3. #send-button structural ID — inner interactive element preferred
+    const viaId = document.querySelector(
+      "#send-button button, #send-button paper-button"
+    );
+    if (viaId) return viaId;
+
+    // 4. #send-button element itself (some builds make the wrapper clickable)
+    return document.querySelector("#send-button");
   }
 
   /**
-   * Returns the container that wraps the chat input and send button row.
-   * Used to inject the hint banner directly above it.
+   * Returns the container row that wraps both the chat input and Send button.
+   * The hint banner is injected as the first child of this element.
+   *
+   * Strategy:
+   *  1. Named structural IDs (#input-panel, #input-container) — most stable.
+   *  2. Polymer wrapper element (present in some builds).
+   *  3. Walk up from the live chat input via .closest() using a broad list
+   *     of known ancestor selectors, then fall back to direct parentElement.
+   *  4. Walk up from the Send button as an independent fallback path.
+   *
+   * This ensures the banner is always positioned correctly even when the
+   * top-level structural IDs are absent from the current DOM.
    */
   function getChatInputContainer() {
-    return (
+    // 1. Named structural IDs (fastest path when they exist)
+    const byId =
       document.querySelector("#input-panel") ||
-      document.querySelector("yt-live-chat-text-input-field") ||
-      (getChatInput() && getChatInput().closest("form, #input-panel, #input-container"))
-    );
+      document.querySelector("#input-container");
+    if (byId) return byId;
+
+    // 2. Polymer wrapper (present in some YouTube builds)
+    const byPolymer = document.querySelector("yt-live-chat-text-input-field");
+    if (byPolymer) return byPolymer;
+
+    // 3. Walk up from the chat input
+    const input = getChatInput();
+    if (input) {
+      const viaClosest = input.closest(
+        "form, #input-panel, #input-container, " +
+        "[id*='input'], [class*='input-panel']"
+      );
+      if (viaClosest) return viaClosest;
+      // Direct parent as the minimal safe fallback
+      if (input.parentElement) return input.parentElement;
+    }
+
+    // 4. Walk up from the Send button as an independent path
+    const btn = getSendButton();
+    if (btn) {
+      const viaBtn = btn.closest(
+        "form, #input-panel, #input-container, " +
+        "[id*='input'], [class*='input-panel']"
+      );
+      if (viaBtn) return viaBtn;
+      if (btn.parentElement) return btn.parentElement;
+    }
+
+    return null;
   }
 
   /* =========================================================
