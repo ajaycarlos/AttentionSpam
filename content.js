@@ -57,7 +57,8 @@
 
   /** Hint banner text states. */
   const HINT_TEXT_IDLE = "Hold Send to loop this message safely.";
-  const HINT_TEXT_LOOPING = "Looping active. Hold Send again to stop.";
+  // NOTE: The looping banner is rendered as HTML (with a STOP link),
+  // not as a plain text constant. See showHint() for the template.
 
   /* =========================================================
      STATE
@@ -404,6 +405,9 @@
   /**
    * Creates and injects the hint banner above the chat input container.
    * Does nothing if the banner already exists.
+   *
+   * The banner is a plain div. Its inner content is managed entirely
+   * by showHint() — this function only handles insertion into the DOM.
    */
   function injectHintBanner() {
     if (document.getElementById("attentionspam-hint")) return;
@@ -423,18 +427,42 @@
   }
 
   /**
-   * Shows the hint banner with the specified text state.
+   * Shows the hint banner with the specified text/HTML state.
+   *
+   * - idle state   : sets textContent (safe, no XSS risk — static string).
+   * - looping state: sets innerHTML to embed the clickable STOP span,
+   *                  then wires a fresh click listener to that span so
+   *                  the listener survives any innerHTML replacement.
+   *
    * @param {'idle'|'looping'} state
    */
   function showHint(state) {
     if (!hintBanner) injectHintBanner();
     if (!hintBanner) return;
 
-    hintBanner.textContent =
-      state === "looping" ? HINT_TEXT_LOOPING : HINT_TEXT_IDLE;
-
     hintBanner.classList.remove("looping");
-    if (state === "looping") hintBanner.classList.add("looping");
+
+    if (state === "looping") {
+      // Build looping banner with an inline STOP link.
+      // innerHTML is safe here — no user data is interpolated.
+      hintBanner.innerHTML =
+        'AttentionSpam is active. Click <span id="attentionspam-stop">STOP</span> to exit.';
+
+      // Wire the STOP span click listener every time we render it,
+      // because innerHTML replacement destroys the previous element.
+      const stopEl = document.getElementById("attentionspam-stop");
+      if (stopEl) {
+        stopEl.addEventListener("click", (e) => {
+          e.stopPropagation();
+          stopLoop();
+        }, { once: true });
+      }
+
+      hintBanner.classList.add("looping");
+    } else {
+      // Idle state — safe plain text, no child elements needed.
+      hintBanner.textContent = HINT_TEXT_IDLE;
+    }
 
     // Trigger CSS transition by first removing then adding .visible
     hintBanner.classList.remove("visible");

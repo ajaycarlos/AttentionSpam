@@ -63,3 +63,18 @@
   border-color: var(--yt-spec-call-to-action, #3ea6ff);
   font-weight: 600;
 }
+
+/* Clickable STOP link inside the looping banner */
+#attentionspam-stop {
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  /* Inherit the banner's theme color so it stays legible in both themes */
+  color: inherit;
+  /* Subtle brightness shift on hover to signal interactivity */
+  transition: filter 0.15s ease;
+}
+
+#attentionspam-stop:hover {
+  filter: brightness(1.4);
+}
